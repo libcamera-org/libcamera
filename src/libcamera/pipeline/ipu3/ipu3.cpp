@@ -445,17 +445,24 @@ CameraConfiguration *PipelineHandlerIPU3::generateConfiguration(Camera *camera,
 		case StreamRole::Viewfinder:
 		case StreamRole::VideoRecording: {
 			/*
-			 * Default viewfinder and videorecording to 1280x720,
-			 * capped to the maximum sensor resolution and aligned
-			 * to the ImgU output constraints.
-			 */
+			* Default videorecording capped to the maximum sensor
+			* resolution and aligned to the ImgU output constraints.
+			*/
 			size = sensorResolution.boundedTo(IPU3ViewfinderSize)
+				       .alignedDownTo(IMGU_OUTPUT_WIDTH_ALIGN,
+						      IMGU_OUTPUT_HEIGHT_ALIGN);
+
+			/*
+			* Limit the minimum size to either 640x480, or the
+			* sensor size if it is smaller
+			*/
+			Size minSize = sensorResolution.boundedTo({ 640, 480 })
 					       .alignedDownTo(IMGU_OUTPUT_WIDTH_ALIGN,
 							      IMGU_OUTPUT_HEIGHT_ALIGN);
+
 			pixelFormat = formats::NV12;
 			bufferCount = IPU3_BUFFER_COUNT;
-			streamFormats[pixelFormat] = { { IMGU_OUTPUT_MIN_SIZE, size } };
-
+			streamFormats[pixelFormat] = { { minSize, size } };
 			break;
 		}
 
