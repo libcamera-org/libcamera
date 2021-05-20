@@ -108,12 +108,16 @@ void IPAIPU3::calculateBdsGrid(const Size &bdsOutputSize)
 	bdsGrid_ = {};
 
 	for (uint32_t widthShift = 3; widthShift <= 7; ++widthShift) {
-		uint32_t width = std::min(kMaxCellWidthPerSet,
-					  bdsOutputSize.width >> widthShift);
+		uint32_t width = std::clamp(bdsOutputSize.width >> widthShift,
+					    2 * kAwbStatsSizeX,
+					    kMaxCellWidthPerSet);
+
 		width = width << widthShift;
 		for (uint32_t heightShift = 3; heightShift <= 7; ++heightShift) {
-			int32_t height = std::min(kMaxCellHeightPerSet,
-						  bdsOutputSize.height >> heightShift);
+			uint32_t height = std::clamp(bdsOutputSize.height >> heightShift,
+						     2 * kAwbStatsSizeY,
+						     kMaxCellHeightPerSet);
+
 			height = height << heightShift;
 			uint32_t error  = std::abs(static_cast<int>(width - bdsOutputSize.width))
 							+ std::abs(static_cast<int>(height - bdsOutputSize.height));
@@ -174,7 +178,7 @@ void IPAIPU3::configure(const IPAConfigInfo &configInfo)
 	awbAlgo_->initialise(params_, configInfo.bdsOutputSize, bdsGrid_);
 
 	agcAlgo_ = std::make_unique<IPU3Agc>();
-	agcAlgo_->initialise(bdsGrid_);
+	agcAlgo_->initialise(bdsGrid_, configInfo);
 }
 
 void IPAIPU3::mapBuffers(const std::vector<IPABuffer> &buffers)
@@ -264,7 +268,7 @@ void IPAIPU3::parseStatistics(unsigned int frame,
 	ControlList ctrls(controls::controls);
 
 	agcAlgo_->process(stats, exposure_, gain_);
-	awbAlgo_->calculateWBGains(stats);
+	awbAlgo_->process(stats);
 
 	if (agcAlgo_->updateControls())
 		setControls(frame);

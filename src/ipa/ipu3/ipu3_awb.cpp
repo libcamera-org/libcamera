@@ -18,9 +18,6 @@ namespace ipa::ipu3 {
 
 LOG_DEFINE_CATEGORY(IPU3Awb)
 
-static constexpr uint32_t kMinZonesCounted = 16;
-static constexpr uint32_t kMinGreenLevelInZone = 32;
-
 /**
  * \struct IspStatsRegion
  * \brief RGB statistics for a given region
@@ -92,7 +89,7 @@ static constexpr uint32_t kMinGreenLevelInZone = 32;
 
 /* Default settings for Bayer noise reduction replicated from the Kernel */
 static const struct ipu3_uapi_bnr_static_config imguCssBnrDefaults = {
-	.wb_gains = { 16, 16, 16, 16 },
+	.wb_gains = { 8192, 8192, 8192, 8192 },
 	.wb_gains_thr = { 255, 255, 255, 255 },
 	.thr_coeffs = { 1700, 0, 31, 31, 0, 16 },
 	.thr_ctrl_shd = { 26, 26, 26, 26 },
@@ -130,7 +127,7 @@ static const struct ipu3_uapi_awb_config_s imguCssAwbDefaults = {
 /* Default color correction matrix defined as an identity matrix */
 static const struct ipu3_uapi_ccm_mat_config imguCssCcmDefault = {
 	8191, 0, 0, 0,
-	0, 8191, 0, 0,
+	0, 6200, 0, 0,
 	0, 0, 8191, 0
 };
 
@@ -159,6 +156,25 @@ const struct ipu3_uapi_gamma_corr_lut imguCssGammaLut = { {
 	7807, 7871, 7935, 7999, 8063, 8127, 8191
 } };
 
+/* Default settings for demosaicing */
+const struct ipu3_uapi_dm_config imguCssDmDefaults = {
+	.dm_en = 1,
+	.ch_ar_en = 1,
+	.fcc_en = 1,
+	.reserved0 = 0,
+	.frame_width = 1280,
+	.gamma_sc = 16,
+	.reserved1 = 0,
+	.lc_ctrl = 15,
+	.reserved2 = 0,
+	.cr_param1 = 16,
+	.reserved3 = 0,
+	.cr_param2 = 16,
+	.reserved4 = 0,
+	.coring_param = 16,
+	.reserved5 = 0,
+};
+
 IPU3Awb::IPU3Awb()
 	: Algorithm()
 {
@@ -166,6 +182,7 @@ IPU3Awb::IPU3Awb()
 	asyncResults_.greenGain = 1.0;
 	asyncResults_.redGain = 1.0;
 	asyncResults_.temperatureK = 4500;
+	minZonesCounted_ = 0;
 }
 
 IPU3Awb::~IPU3Awb()
@@ -201,6 +218,16 @@ void IPU3Awb::initialise(ipu3_uapi_params &params, const Size &bdsOutputSize, st
 	params.use.acc_gamma = 1;
 	params.acc_param.gamma.gc_lut = imguCssGammaLut;
 	params.acc_param.gamma.gc_ctrl.enable = 1;
+
+	params.use.acc_dm = 1;
+	params.acc_param.dm = imguCssDmDefaults;
+
+	params.use.obgrid = 1;
+	params.use.obgrid_param = 1;
+	params.obgrid_param.b = 35; //112; // 28
+	params.obgrid_param.r = 35; //104; // 26
+	params.obgrid_param.gb = 35; //140; // 35
+	params.obgrid_param.gr = 35; //140; // 35
 
 	zones_.reserve(kAwbStatsSizeX * kAwbStatsSizeY);
 }
@@ -241,7 +268,7 @@ void IPU3Awb::generateZones(std::vector<RGB> &zones)
 	for (unsigned int i = 0; i < kAwbStatsSizeX * kAwbStatsSizeY; i++) {
 		RGB zone;
 		double counted = awbStats_[i].counted;
-		if (counted >= kMinZonesCounted) {
+		if (counted >= minZonesCounted_) {
 			zone.G = awbStats_[i].gSum / counted;
 			if (zone.G >= kMinGreenLevelInZone) {
 				zone.R = awbStats_[i].rSum / counted;
@@ -258,6 +285,7 @@ void IPU3Awb::generateAwbStats(const ipu3_uapi_stats_3a *stats)
 	uint32_t regionWidth = round(awbGrid_.width / static_cast<double>(kAwbStatsSizeX));
 	uint32_t regionHeight = round(awbGrid_.height / static_cast<double>(kAwbStatsSizeY));
 
+	minZonesCounted_ = ((regionWidth * regionHeight) * 4) / 5;
 	/*
 	 * Generate a (kAwbStatsSizeX x kAwbStatsSizeY) array from the IPU3 grid which is
 	 * (awbGrid_.width x awbGrid_.height).
@@ -269,7 +297,7 @@ void IPU3Awb::generateAwbStats(const ipu3_uapi_stats_3a *stats)
 			uint32_t cellY = ((cellPosition / awbGrid_.width) / regionHeight) % kAwbStatsSizeY;
 
 			uint32_t awbRegionPosition = cellY * kAwbStatsSizeX + cellX;
-			cellPosition *= 8;
+			cellPosition *= sizeof(Ipu3AwbCell);
 
 			/* Cast the initial IPU3 structure to simplify the reading */
 			Ipu3AwbCell *currentCell = reinterpret_cast<Ipu3AwbCell *>(const_cast<uint8_t *>(&stats->awb_raw_buffer.meta_data[cellPosition]));
@@ -351,17 +379,22 @@ void IPU3Awb::calculateWBGains(const ipu3_uapi_stats_3a *stats)
 	}
 }
 
+void IPU3Awb::process(const ipu3_uapi_stats_3a *stats)
+{
+	calculateWBGains(stats);
+}
+
 void IPU3Awb::updateWbParameters(ipu3_uapi_params &params, double agcGamma)
 {
 	/*
 	 * Green gains should not be touched and considered 1.
 	 * Default is 16, so do not change it at all.
-	 * 4096 is the value for a gain of 1.0
+	 * 8192 is the value for a gain of 1.0
 	 */
-	params.acc_param.bnr.wb_gains.gr = 16;
-	params.acc_param.bnr.wb_gains.r = 4096 * asyncResults_.redGain;
-	params.acc_param.bnr.wb_gains.b = 4096 * asyncResults_.blueGain;
-	params.acc_param.bnr.wb_gains.gb = 16;
+	params.acc_param.bnr.wb_gains.gr = 8192;
+	params.acc_param.bnr.wb_gains.r = 8192 * asyncResults_.redGain;
+	params.acc_param.bnr.wb_gains.b = 8192 * asyncResults_.blueGain;
+	params.acc_param.bnr.wb_gains.gb = 8192;
 
 	LOG(IPU3Awb, Debug) << "Color temperature estimated: " << asyncResults_.temperatureK
 			    << " and gamma calculated: " << agcGamma;
