@@ -51,5 +51,5 @@ algorithms:
   - Agc:
       exposureTarget: 2.5
       hysteresis: 0.2
-      stepDenominator: 20
+      proportionalGain: 0.04
 ...

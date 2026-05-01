@@ -3,17 +3,45 @@
 ---
 version: 1
 algorithms:
+  # --- Black Level ---
+  # blackLevel: 16-bit black level pedestal (optional).
+  #   If omitted, auto-detected from histogram dark end.
   - BlackLevel:
+
+  # --- Auto White Balance ---
+  # maxGainR: Maximum red channel gain (default 4.0).
+  # maxGainB: Maximum blue channel gain (default 4.0).
+  # speed: Temporal smoothing factor 0-1 (default 1.0 = instant).
+  #   0.25 = slow smooth, 0.5 = moderate, 1.0 = no smoothing.
   - Awb:
-  # Color correction matrices can be defined here. The CCM algorithm
-  # has a significant performance impact, and should only be enabled
-  # if tuned.
+
+  # --- Color Correction Matrix ---
+  # Has a significant performance impact on the CPU ISP, and should
+  # only be enabled if tuned. Provide ccms as a list of color temperature
+  # entries with a 3x3 matrix:
   # - Ccm:
   #     ccms:
   #       - ct: 6500
-  #         ccm: [ 1, 0, 0,
-  #                0, 1, 0,
-  #                0, 0, 1]
+  #         ccm: [ 1.0,  0.0,  0.0,
+  #                0.0,  1.0,  0.0,
+  #                0.0,  0.0,  1.0 ]
+  # - Ccm:
+
+  # --- Image Adjustments ---
+  # gamma: Gamma encoding value (default 2.2, range 0.1-10.0).
+  # contrast: Contrast scaling (default 1.0, range 0.0-2.0).
+  # saturation: Saturation multiplier (default 1.0, range 0.0-2.0).
+  #   Only active when CCM is enabled.
   - Adjust:
+
+  # --- Auto Gain/Exposure Control (proportional) ---
+  # exposureTarget: Target MSV (mean sample value) in histogram bins.
+  #   Default: 2.5 (middle of 5-bin range).
+  #   Lower values target a darker exposure.
+  # hysteresis: Deadband around target where no adjustment occurs.
+  #   Default 0.2. Larger values reduce sensitivity near target.
+  # proportionalGain: Step scaling factor (default 0.04).
+  #   At max error (~2.5): factor 1.10 (~10% step).
+  #   Near target: factor ~1.01 (~1% step).
   - Agc:
 ...
