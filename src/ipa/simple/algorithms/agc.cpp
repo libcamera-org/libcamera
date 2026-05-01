@@ -28,35 +28,46 @@ static constexpr unsigned int kExposureBinsCount = 5;
 
 /*
  * The exposure is optimal when the mean sample value of the histogram is
- * in the middle of the range.
+ * in the middle of the range. Overridable via YAML exposureTarget.
  */
-static constexpr float kExposureOptimal = kExposureBinsCount / 2.0;
+static constexpr float kExposureTargetDefault = kExposureBinsCount / 2.0;
 
 /*
  * This implements the hysteresis for the exposure adjustment.
  * It is small enough to have the exposure close to the optimal, and is big
  * enough to prevent the exposure from wobbling around the optimal value.
  */
-static constexpr float kExposureSatisfactory = 0.2;
+static constexpr float kHysteresisDefault = 0.2;
 
 /*
  * Proportional gain for exposure/gain adjustment. Maps the MSV error to a
  * multiplicative correction factor:
  *
- *   factor = 1.0 + kExpProportionalGain * error
+ *   factor = 1.0 + proportionalGain_ * error
  *
- * With kExpProportionalGain = 0.04:
+ * With proportionalGain_ = 0.04:
  *   - max error ~2.5 -> factor 1.10 (~10% step, same as before)
  *   - error 1.0      -> factor 1.04 (~4% step)
  *   - error 0.3      -> factor 1.012 (~1.2% step)
  *
- * This replaces the fixed 10% bang-bang step with a proportional correction
- * that converges smoothly and avoids overshooting near the target.
+ * Overridable via YAML proportionalGain.
  */
-static constexpr float kExpProportionalGain = 0.04;
+static constexpr float kProportionalGainDefault = 0.04;
 
 Agc::Agc()
 {
+}
+
+int Agc::init([[maybe_unused]] IPAContext &context, const ValueNode &tuningData)
+{
+	exposureTarget_ = tuningData["exposureTarget"].get<float>()
+		.value_or(kExposureTargetDefault);
+	hysteresis_ = tuningData["hysteresis"].get<float>()
+		.value_or(kHysteresisDefault);
+	proportionalGain_ = tuningData["proportionalGain"].get<float>()
+		.value_or(kProportionalGainDefault);
+
+	return 0;
 }
 
 void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, double exposureMSV)
@@ -64,9 +75,9 @@ void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, dou
 	int32_t &exposure = frameContext.sensor.exposure;
 	double &again = frameContext.sensor.gain;
 
-	double error = kExposureOptimal - exposureMSV;
+	double error = exposureTarget_ - exposureMSV;
 
-	if (std::abs(error) <= kExposureSatisfactory)
+	if (std::abs(error) <= hysteresis_)
 		return;
 
 	/*
@@ -74,7 +85,7 @@ void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, dou
 	 * determines the direction: positive error means too dark (increase),
 	 * negative means too bright (decrease).
 	 */
-	float factor = 1.0f + static_cast<float>(error) * kExpProportionalGain;
+	float factor = 1.0f + static_cast<float>(error) * proportionalGain_;
 
 	if (factor > 1.0f) {
 		/* Scene too dark: increase exposure first, then gain. */

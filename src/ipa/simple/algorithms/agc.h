@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <libcamera/internal/yaml_parser.h>
+
 #include "algorithm.h"
 
 namespace libcamera {
@@ -19,6 +21,8 @@ public:
 	Agc();
 	~Agc() = default;
 
+	int init(IPAContext &context, const ValueNode &tuningData) override;
+
 	void process(IPAContext &context, const uint32_t frame,
 		     IPAFrameContext &frameContext,
 		     const SwIspStats *stats,
@@ -26,6 +30,10 @@ public:
 
 private:
 	void updateExposure(IPAContext &context, IPAFrameContext &frameContext, double exposureMSV);
+
+	float exposureTarget_;
+	float hysteresis_;
+	float proportionalGain_;
 };
 
 } /* namespace ipa::soft::algorithms */
