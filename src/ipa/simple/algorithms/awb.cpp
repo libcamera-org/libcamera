@@ -14,6 +14,8 @@
 
 #include <libcamera/control_ids.h>
 
+#include "libcamera/internal/yaml_parser.h"
+
 #include "libipa/colours.h"
 #include "simple/ipa_context.h"
 
@@ -22,6 +24,21 @@ namespace libcamera {
 LOG_DEFINE_CATEGORY(IPASoftAwb)
 
 namespace ipa::soft::algorithms {
+
+int Awb::init([[maybe_unused]] IPAContext &context,
+	      const ValueNode &tuningData)
+{
+	maxGainR_ = tuningData["maxGainR"].get<float>().value_or(4.0f);
+	maxGainB_ = tuningData["maxGainB"].get<float>().value_or(4.0f);
+	speed_ = tuningData["speed"].get<float>().value_or(1.0f);
+
+	LOG(IPASoftAwb, Debug)
+		<< "AWB: maxGainR " << maxGainR_
+		<< ", maxGainB " << maxGainB_
+		<< ", speed " << speed_;
+
+	return 0;
+}
 
 int Awb::configure(IPAContext &context,
 		   [[maybe_unused]] const IPAConfigInfo &configInfo)
@@ -84,14 +101,21 @@ void Awb::process(IPAContext &context,
 	const RGB<uint64_t> sum = stats->sum_.max(offset + minValid) - offset;
 
 	/*
-	 * Calculate red and blue gains for AWB.
-	 * Clamp max gain at 4.0, this also avoids 0 division.
+	 * Calculate red and blue gains for AWB. Clamp max gain to avoid
+	 * division by zero and extreme color casts.
 	 */
 	auto &gains = context.activeState.awb.gains;
+	float rawRGain = sum.r() <= sum.g() / maxGainR_ ? maxGainR_ :
+				static_cast<float>(sum.g()) / sum.r();
+	float rawBGain = sum.b() <= sum.g() / maxGainB_ ? maxGainB_ :
+				static_cast<float>(sum.g()) / sum.b();
+
+	/* Apply temporal smoothing to avoid rapid white balance changes. */
+	float alpha = std::clamp(speed_, 0.01f, 1.0f);
 	gains = { {
-		sum.r() <= sum.g() / 4 ? 4.0f : static_cast<float>(sum.g()) / sum.r(),
-		1.0,
-		sum.b() <= sum.g() / 4 ? 4.0f : static_cast<float>(sum.g()) / sum.b(),
+		gains.r() * (1.0f - alpha) + rawRGain * alpha,
+		1.0f,
+		gains.b() * (1.0f - alpha) + rawBGain * alpha,
 	} };
 
 	RGB<double> rgbGains{ { 1 / gains.r(), 1 / gains.g(), 1 / gains.b() } };
