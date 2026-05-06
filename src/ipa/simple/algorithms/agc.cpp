@@ -7,6 +7,8 @@
 
 #include "agc.h"
 
+#include <algorithm>
+#include <cmath>
 #include <stdint.h>
 
 #include <libcamera/base/log.h>
@@ -26,63 +28,88 @@ static constexpr unsigned int kExposureBinsCount = 5;
 
 /*
  * The exposure is optimal when the mean sample value of the histogram is
- * in the middle of the range.
+ * in the middle of the range. Overridable via YAML exposureTarget.
  */
-static constexpr float kExposureOptimal = kExposureBinsCount / 2.0;
+static constexpr float kExposureTargetDefault = kExposureBinsCount / 2.0;
 
 /*
  * This implements the hysteresis for the exposure adjustment.
  * It is small enough to have the exposure close to the optimal, and is big
  * enough to prevent the exposure from wobbling around the optimal value.
  */
-static constexpr float kExposureSatisfactory = 0.2;
+static constexpr float kHysteresisDefault = 0.2;
+
+/*
+ * Proportional gain for exposure/gain adjustment. Maps the MSV error to a
+ * multiplicative correction factor:
+ *
+ *   factor = 1.0 + proportionalGain_ * error
+ *
+ * With proportionalGain_ = 0.04:
+ *   - max error ~2.5 -> factor 1.10 (~10% step, same as before)
+ *   - error 1.0      -> factor 1.04 (~4% step)
+ *   - error 0.3      -> factor 1.012 (~1.2% step)
+ *
+ * Overridable via YAML proportionalGain.
+ */
+static constexpr float kProportionalGainDefault = 0.04;
 
 Agc::Agc()
 {
 }
 
+int Agc::init([[maybe_unused]] IPAContext &context, const ValueNode &tuningData)
+{
+	exposureTarget_ = tuningData["exposureTarget"].get<float>()
+		.value_or(kExposureTargetDefault);
+	hysteresis_ = tuningData["hysteresis"].get<float>()
+		.value_or(kHysteresisDefault);
+	proportionalGain_ = tuningData["proportionalGain"].get<float>()
+		.value_or(kProportionalGainDefault);
+
+	return 0;
+}
+
 void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, double exposureMSV)
 {
-	/*
-	 * kExpDenominator of 10 gives ~10% increment/decrement;
-	 * kExpDenominator of 5 - about ~20%
-	 */
-	static constexpr uint8_t kExpDenominator = 10;
-	static constexpr uint8_t kExpNumeratorUp = kExpDenominator + 1;
-	static constexpr uint8_t kExpNumeratorDown = kExpDenominator - 1;
-
 	int32_t &exposure = frameContext.sensor.exposure;
 	double &again = frameContext.sensor.gain;
 
-	if (exposureMSV < kExposureOptimal - kExposureSatisfactory) {
+	double error = exposureTarget_ - exposureMSV;
+
+	if (std::abs(error) <= hysteresis_)
+		return;
+
+	/*
+	 * Compute a proportional correction factor. The sign of the error
+	 * determines the direction: positive error means too dark (increase),
+	 * negative means too bright (decrease).
+	 */
+	float factor = 1.0f + static_cast<float>(error) * proportionalGain_;
+
+	if (factor > 1.0f) {
+		/* Scene too dark: increase exposure first, then gain. */
 		if (exposure < context.configuration.agc.exposureMax) {
-			int32_t next = exposure * kExpNumeratorUp / kExpDenominator;
-			if (next - exposure < 1)
-				exposure += 1;
-			else
-				exposure = next;
+			int32_t next = static_cast<int32_t>(exposure * factor);
+			exposure = std::max(next, exposure + 1);
 		} else {
-			double next = again * kExpNumeratorUp / kExpDenominator;
+			double next = again * factor;
 			if (next - again < context.configuration.agc.againMinStep)
 				again += context.configuration.agc.againMinStep;
 			else
 				again = next;
 		}
-	}
-
-	if (exposureMSV > kExposureOptimal + kExposureSatisfactory) {
+	} else {
+		/* Scene too bright: decrease gain first, then exposure. */
 		if (again > context.configuration.agc.again10) {
-			double next = again * kExpNumeratorDown / kExpDenominator;
+			double next = again * factor;
 			if (again - next < context.configuration.agc.againMinStep)
 				again -= context.configuration.agc.againMinStep;
 			else
 				again = next;
 		} else {
-			int32_t next = exposure * kExpNumeratorDown / kExpDenominator;
-			if (exposure - next < 1)
-				exposure -= 1;
-			else
-				exposure = next;
+			int32_t next = static_cast<int32_t>(exposure * factor);
+			exposure = std::min(next, exposure - 1);
 		}
 	}
 
@@ -96,6 +123,7 @@ void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, dou
 
 	LOG(IPASoftExposure, Debug)
 		<< "exposureMSV " << exposureMSV
+		<< " error " << error << " factor " << factor
 		<< " exp " << exposure << " again " << again;
 }
 

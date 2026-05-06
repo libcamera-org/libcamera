@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: CC0-1.0
 
 libipa_test = [
+    {'name': 'ccm', 'sources': ['ccm.cpp']},
     {'name': 'fixedpoint', 'sources': ['fixedpoint.cpp']},
     {'name': 'histogram', 'sources': ['histogram.cpp']},
     {'name': 'interpolator', 'sources': ['interpolator.cpp']},

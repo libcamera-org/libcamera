@@ -43,6 +43,10 @@ public:
 
 private:
 	void applySaturation(Matrix<float, 3, 3> &ccm, float saturation);
+
+	float defaultGamma_;
+	float defaultContrast_;
+	float defaultSaturation_;
 };
 
 } /* namespace ipa::soft::algorithms */

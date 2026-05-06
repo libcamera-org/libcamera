@@ -14,34 +14,37 @@
 #include <libcamera/control_ids.h>
 
 #include "libcamera/internal/matrix.h"
+#include "libcamera/internal/yaml_parser.h"
 
 namespace libcamera {
 
 namespace ipa::soft::algorithms {
 
-constexpr float kDefaultContrast = 1.0f;
-constexpr float kDefaultSaturation = 1.0f;
-
 LOG_DEFINE_CATEGORY(IPASoftAdjust)
 
-int Adjust::init(IPAContext &context, [[maybe_unused]] const ValueNode &tuningData)
+int Adjust::init(IPAContext &context, const ValueNode &tuningData)
 {
+	defaultGamma_ = tuningData["gamma"].get<float>().value_or(kDefaultGamma);
+	defaultContrast_ = tuningData["contrast"].get<float>().value_or(1.0f);
+	defaultSaturation_ = tuningData["saturation"].get<float>().value_or(1.0f);
+
 	context.ctrlMap[&controls::Gamma] =
-		ControlInfo(0.1f, 10.0f, kDefaultGamma);
+		ControlInfo(0.1f, 10.0f, defaultGamma_);
 	context.ctrlMap[&controls::Contrast] =
-		ControlInfo(0.0f, 2.0f, kDefaultContrast);
+		ControlInfo(0.0f, 2.0f, defaultContrast_);
 	if (context.ccmEnabled)
 		context.ctrlMap[&controls::Saturation] =
-			ControlInfo(0.0f, 2.0f, kDefaultSaturation);
+			ControlInfo(0.0f, 2.0f, defaultSaturation_);
+
 	return 0;
 }
 
 int Adjust::configure(IPAContext &context,
 		      [[maybe_unused]] const IPAConfigInfo &configInfo)
 {
-	context.activeState.knobs.gamma = kDefaultGamma;
-	context.activeState.knobs.contrast = std::optional<float>();
-	context.activeState.knobs.saturation = std::optional<float>();
+	context.activeState.knobs.gamma = defaultGamma_;
+	context.activeState.knobs.contrast = defaultContrast_;
+	context.activeState.knobs.saturation = defaultSaturation_;
 
 	return 0;
 }
@@ -59,13 +62,13 @@ void Adjust::queueRequest(typename Module::Context &context,
 
 	const auto &contrast = controls.get(controls::Contrast);
 	if (contrast.has_value()) {
-		context.activeState.knobs.contrast = contrast;
+		context.activeState.knobs.contrast = contrast.value();
 		LOG(IPASoftAdjust, Debug) << "Setting contrast to " << contrast.value();
 	}
 
 	const auto &saturation = controls.get(controls::Saturation);
 	if (saturation.has_value()) {
-		context.activeState.knobs.saturation = saturation;
+		context.activeState.knobs.saturation = saturation.value();
 		LOG(IPASoftAdjust, Debug) << "Setting saturation to " << saturation.value();
 	}
 }
@@ -100,15 +103,15 @@ void Adjust::prepare(IPAContext &context,
 	frameContext.gamma = context.activeState.knobs.gamma;
 	frameContext.contrast = context.activeState.knobs.contrast;
 
-	auto &saturation = context.activeState.knobs.saturation;
-	if (context.ccmEnabled && saturation) {
-		applySaturation(context.activeState.combinedMatrix, saturation.value());
+	const float saturation = context.activeState.knobs.saturation;
+	if (context.ccmEnabled) {
+		applySaturation(context.activeState.combinedMatrix, saturation);
 		frameContext.saturation = saturation;
 	}
 
 	params->gamma = 1.0 / context.activeState.knobs.gamma;
-	const float contrast = context.activeState.knobs.contrast.value_or(kDefaultContrast);
-	params->contrastExp = tan(std::clamp(contrast * M_PI_4, 0.0, M_PI_2 - 0.00001));
+	params->contrastExp = tan(std::clamp(context.activeState.knobs.contrast * M_PI_4,
+					     0.0, M_PI_2 - 0.00001));
 }
 
 void Adjust::process([[maybe_unused]] IPAContext &context,
@@ -117,14 +120,9 @@ void Adjust::process([[maybe_unused]] IPAContext &context,
 		     [[maybe_unused]] const SwIspStats *stats,
 		     ControlList &metadata)
 {
-	const auto &gamma = frameContext.gamma;
-	metadata.set(controls::Gamma, gamma);
-
-	const auto &contrast = frameContext.contrast;
-	metadata.set(controls::Contrast, contrast.value_or(kDefaultContrast));
-
-	const auto &saturation = frameContext.saturation;
-	metadata.set(controls::Saturation, saturation.value_or(kDefaultSaturation));
+	metadata.set(controls::Gamma, frameContext.gamma);
+	metadata.set(controls::Contrast, frameContext.contrast);
+	metadata.set(controls::Saturation, frameContext.saturation);
 }
 
 REGISTER_IPA_ALGORITHM(Adjust, "Adjust")
