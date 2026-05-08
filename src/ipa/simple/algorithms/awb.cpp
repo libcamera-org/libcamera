@@ -55,16 +55,15 @@ void Awb::prepare(IPAContext &context,
 		  DebayerParams *params)
 {
 	auto &gains = context.activeState.awb.gains;
-	Matrix<float, 3, 3> gainMatrix = { { gains.r(), 0, 0,
-					     0, gains.g(), 0,
-					     0, 0, gains.b() } };
-	context.activeState.combinedMatrix =
-		gainMatrix * context.activeState.combinedMatrix;
+	/*
+	 * Store AWB gains in params for the shader to apply separately.
+	 * AWB gains are NOT baked into combinedMatrix so that the CCM always
+	 * receives a clamped [0,1] white-balanced signal (see shader).
+	 */
+	params->gains = gains;
 
 	frameContext.gains.red = gains.r();
 	frameContext.gains.blue = gains.b();
-
-	params->gains = gains;
 }
 
 void Awb::process(IPAContext &context,

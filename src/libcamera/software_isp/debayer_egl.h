@@ -101,6 +101,7 @@ private:
 
 	/* Contrast */
 	GLint contrastExpUniformDataIn_;
+	GLint awbGainsUniformDataIn_;
 
 	Rectangle window_;
 	std::unique_ptr<SwStatsCpu> stats_;

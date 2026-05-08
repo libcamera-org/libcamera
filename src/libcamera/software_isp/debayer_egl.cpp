@@ -100,6 +100,7 @@ int DebayerEGL::getShaderVariableLocations(void)
 
 	textureUniformBayerDataIn_ = glGetUniformLocation(programId_, "tex_y");
 	ccmUniformDataIn_ = glGetUniformLocation(programId_, "ccm");
+	awbGainsUniformDataIn_ = glGetUniformLocation(programId_, "awbGains");
 	blackLevelUniformDataIn_ = glGetUniformLocation(programId_, "blacklevel");
 	gammaUniformDataIn_ = glGetUniformLocation(programId_, "gamma");
 	contrastExpUniformDataIn_ = glGetUniformLocation(programId_, "contrastExp");
@@ -473,6 +474,12 @@ void DebayerEGL::setShaderVariableValues(const DebayerParams &params)
 	};
 	glUniformMatrix3fv(ccmUniformDataIn_, 1, GL_FALSE, ccm);
 	LOG(Debayer, Debug) << " ccmUniformDataIn_ " << ccmUniformDataIn_ << " data " << params.combinedMatrix;
+
+	/*
+	 * AWB gains (applied in shader before CCM, with clamp to [0,1])
+	 */
+	glUniform3f(awbGainsUniformDataIn_, params.gains.r(), params.gains.g(), params.gains.b());
+	LOG(Debayer, Debug) << " awbGainsUniformDataIn_ " << awbGainsUniformDataIn_ << " data " << params.gains;
 
 	/*
 	 * 0 = Red, 1 = Green, 2 = Blue

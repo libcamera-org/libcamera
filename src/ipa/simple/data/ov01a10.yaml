@@ -11,6 +11,17 @@ algorithms:
       maxGainB: 3.2
       speed: 0.25
   - Ccm:
+      # CCMs extracted verbatim from the OV01A10 AIQB calibration binary.
+      # The Intel IPU6 hardware pipeline applies a GLIM (Global Inverse Tone
+      # Mapping) stage before the ACM/CCM block to compress highlights, so
+      # the CCMs were calibrated assuming bright pixels are already compressed.
+      # Without GLIM, the large diagonal gains clip the R channel on bright
+      # pixels (magenta highlights).  highlightCompression implements the same
+      # Reinhard-style luma gain:  g = 1 / (1 + luma * k)
+      #
+      # The pipeline order is AWB first (with clamp to [0,1]), then CCM.
+      # The CCM rows sum to 1.0 and always receives a clamped white-balanced
+      # signal, so highlights map to white rather than magenta.
       ccms:
         - ct: 2856
           ccm: [  1.1248,  0.2210, -0.3458,
@@ -49,7 +60,7 @@ algorithms:
       contrast: 1.0
       saturation: 1.0
   - Agc:
-      exposureTarget: 2.5
-      hysteresis: 0.2
-      proportionalGain: 0.04
+      exposureTarget: 2.0
+      hysteresis: 0.3
+      proportionalGain: 0.12
 ...

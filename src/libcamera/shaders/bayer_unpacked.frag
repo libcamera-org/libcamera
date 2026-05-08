@@ -25,6 +25,7 @@ varying vec4            center;
 varying vec4            yCoord;
 varying vec4            xCoord;
 uniform mat3            ccm;
+uniform vec3            awbGains;
 uniform vec3            blacklevel;
 uniform float           gamma;
 uniform float           contrastExp;
@@ -169,6 +170,18 @@ void main(void) {
     rin = rgb.r;
     gin = rgb.g;
     bin = rgb.b;
+
+    /*
+     * Apply AWB gains and clamp to [0,1] before CCM.
+     *
+     * The CCM rows sum to 1.0, meaning it is designed to receive a
+     * white-balanced signal in [0,1].  Clamping after AWB ensures the CCM
+     * never sees values > 1.0, which would cause differential clipping across
+     * channels (magenta/cyan highlights).
+     */
+    rin = clamp(rin * awbGains.r, 0.0, 1.0);
+    gin = clamp(gin * awbGains.g, 0.0, 1.0);
+    bin = clamp(bin * awbGains.b, 0.0, 1.0);
 
     rgb.r = (rin * ccm[0][0]) + (gin * ccm[0][1]) + (bin * ccm[0][2]);
     rgb.g = (rin * ccm[1][0]) + (gin * ccm[1][1]) + (bin * ccm[1][2]);
