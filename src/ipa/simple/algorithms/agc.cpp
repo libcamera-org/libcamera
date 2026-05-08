@@ -54,6 +54,16 @@ static constexpr float kHysteresisDefault = 0.2;
  */
 static constexpr float kProportionalGainDefault = 0.04;
 
+/*
+ * Percentile of the luminance histogram used for metering.
+ * 0.5 = median (expose for the middle pixel), 1.0 = brightest pixel.
+ * Values below 1.0 protect highlights: e.g. 0.9 means expose so that
+ * 90% of pixels are below the target bin, preventing bright areas from
+ * blowing out at the expense of slightly darker midtones.
+ * Overridable via YAML meteringPercentile.
+ */
+static constexpr float kMeteringPercentileDefault = 1.0;
+
 Agc::Agc()
 {
 }
@@ -66,6 +76,8 @@ int Agc::init([[maybe_unused]] IPAContext &context, const ValueNode &tuningData)
 		.value_or(kHysteresisDefault);
 	proportionalGain_ = tuningData["proportionalGain"].get<float>()
 		.value_or(kProportionalGainDefault);
+	meteringPercentile_ = tuningData["meteringPercentile"].get<float>()
+		.value_or(kMeteringPercentileDefault);
 
 	return 0;
 }
@@ -191,7 +203,45 @@ void Agc::process(IPAContext &context,
 		num += exposureBins[i] * (i + 1);
 	}
 
-	float exposureMSV = (denom == 0 ? 0 : static_cast<float>(num) / denom);
+	float exposureMSV;
+	if (meteringPercentile_ >= 1.0f) {
+		/* Default: mean sample value across all bins. */
+		exposureMSV = (denom == 0 ? 0 : static_cast<float>(num) / denom);
+	} else {
+		/*
+		 * Percentile metering: find the histogram bin (in the full
+		 * 64-bin space) at which the cumulative pixel count reaches
+		 * meteringPercentile_ of total pixels.
+		 *
+		 * We then express the result directly on the kExposureBinsCount
+		 * MSV scale so it can be compared to exposureTarget.  The
+		 * exposureTarget should be set close to kExposureBinsCount
+		 * (e.g. 4.5 out of 5) so that the percentile pixel lands near
+		 * the top of the range -- protecting highlights while keeping
+		 * the subject bright.
+		 *
+		 * Example: meteringPercentile_=0.90, exposureTarget=4.5 means
+		 * "expose so the 90th percentile pixel is at 90% of full scale".
+		 */
+		unsigned int totalPixels = denom;
+		unsigned int threshold = static_cast<unsigned int>(totalPixels * meteringPercentile_);
+		unsigned int cumulative = 0;
+		unsigned int percentileHistBin = histogramSize - 1;
+		for (unsigned int i = 0; i < histogramSize; i++) {
+			cumulative += histogram[blackLevelHistIdx + i];
+			if (cumulative >= threshold) {
+				percentileHistBin = i;
+				break;
+			}
+		}
+		/* Map from [0, histogramSize) to [1, kExposureBinsCount]. */
+		exposureMSV = 1.0f + static_cast<float>(percentileHistBin) *
+			      (kExposureBinsCount - 1) / (histogramSize - 1);
+		LOG(IPASoftExposure, Debug)
+			<< "percentile " << meteringPercentile_
+			<< " -> histBin " << percentileHistBin
+			<< " (MSV=" << exposureMSV << ")";
+	}
 	updateExposure(context, frameContext, exposureMSV);
 }
 

@@ -34,6 +34,7 @@ private:
 	float exposureTarget_;
 	float hysteresis_;
 	float proportionalGain_;
+	float meteringPercentile_;
 };
 
 } /* namespace ipa::soft::algorithms */
