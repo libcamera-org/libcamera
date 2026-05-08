@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: CC0-1.0
 
 libipa_test = [
+    {'name': 'awb_ccm_pipeline', 'sources': ['awb_ccm_pipeline.cpp']},
     {'name': 'ccm', 'sources': ['ccm.cpp']},
     {'name': 'fixedpoint', 'sources': ['fixedpoint.cpp']},
     {'name': 'histogram', 'sources': ['histogram.cpp']},
