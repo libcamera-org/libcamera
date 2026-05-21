@@ -29,6 +29,7 @@ struct IPASessionConfiguration {
 		int32_t exposureMin, exposureMax;
 		double againMin, againMax, again10, againMinStep;
 		utils::Duration lineDuration;
+		utils::Duration frameDurationMin, frameDurationMax;
 	} agc;
 	struct {
 		std::optional<uint8_t> level;

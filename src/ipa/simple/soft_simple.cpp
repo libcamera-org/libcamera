@@ -177,6 +177,26 @@ int IPASoftSimple::init(const IPASettings &settings,
 		stats_ = static_cast<SwIspStats *>(mem);
 	}
 
+	/*
+	 * Advertise FrameDurationLimits based on the sensor's absolute exposure
+	 * range. The actual limits will be constrained at configure() time and
+	 * updated dynamically when the application sets FrameDurationLimits via
+	 * queueRequest().
+	 */
+	const ControlInfo &exposureInfo =
+		sensorControls.find(V4L2_CID_EXPOSURE)->second;
+	utils::Duration lineDuration =
+		utils::Duration(sensorInfo.minLineLength * 1.0s / sensorInfo.pixelRate);
+	int64_t minFrameDurationUs =
+		static_cast<int64_t>(utils::Duration(exposureInfo.min().get<int32_t>() *
+						     lineDuration).get<std::micro>());
+	int64_t maxFrameDurationUs =
+		static_cast<int64_t>(utils::Duration(exposureInfo.max().get<int32_t>() *
+						     lineDuration).get<std::micro>());
+	context_.ctrlMap[&controls::FrameDurationLimits] =
+		ControlInfo(minFrameDurationUs, maxFrameDurationUs,
+			    maxFrameDurationUs);
+
 	ControlInfoMap::Map ctrlMap = context_.ctrlMap;
 	*ipaControls = ControlInfoMap(std::move(ctrlMap), controls::controls);
 
@@ -215,6 +235,14 @@ int IPASoftSimple::configure(const IPAConfigInfo &configInfo)
 		context_.sensorInfo.minLineLength * 1.0s / context_.sensorInfo.pixelRate;
 	context_.configuration.agc.exposureMin = exposureInfo.min().get<int32_t>();
 	context_.configuration.agc.exposureMax = exposureInfo.max().get<int32_t>();
+
+	/* Compute absolute frame duration limits from the sensor exposure range. */
+	context_.configuration.agc.frameDurationMin =
+		context_.configuration.agc.exposureMin *
+		context_.configuration.agc.lineDuration;
+	context_.configuration.agc.frameDurationMax =
+		context_.configuration.agc.exposureMax *
+		context_.configuration.agc.lineDuration;
 	if (!context_.configuration.agc.exposureMin) {
 		LOG(IPASoft, Warning) << "Minimum exposure is zero, that can't be linear";
 		context_.configuration.agc.exposureMin = 1;
@@ -278,6 +306,46 @@ void IPASoftSimple::stop()
 void IPASoftSimple::queueRequest(const uint32_t frame, const ControlList &controls)
 {
 	IPAFrameContext &frameContext = context_.frameContexts.alloc(frame);
+
+	/*
+	 * Handle FrameDurationLimits: translate the requested max frame duration
+	 * into a maximum exposure time (in lines) so the AGC doesn't set an
+	 * exposure that the sensor can't achieve at the requested frame rate.
+	 * Without this, the sensor silently clips exposure to the frame period
+	 * while the IPA keeps cranking up gain to compensate, causing overexposure.
+	 */
+	const auto &frameDurationLimits = controls.get(controls::FrameDurationLimits);
+	if (frameDurationLimits) {
+		utils::Duration maxFrameDuration =
+			frameDurationLimits->back() * 1.0us;
+		utils::Duration minFrameDuration =
+			frameDurationLimits->front() * 1.0us;
+
+		/* Clamp to the sensor's absolute limits. */
+		maxFrameDuration = std::clamp(maxFrameDuration,
+					      context_.configuration.agc.frameDurationMin,
+					      context_.configuration.agc.frameDurationMax);
+		minFrameDuration = std::clamp(minFrameDuration,
+					      context_.configuration.agc.frameDurationMin,
+					      maxFrameDuration);
+
+		/* Convert max frame duration to max exposure in lines. */
+		int32_t newExposureMax = static_cast<int32_t>(
+			maxFrameDuration / context_.configuration.agc.lineDuration);
+		newExposureMax = std::clamp(newExposureMax,
+					    context_.configuration.agc.exposureMin,
+					    static_cast<int32_t>(
+						    context_.configuration.agc.frameDurationMax /
+						    context_.configuration.agc.lineDuration));
+
+		context_.configuration.agc.exposureMax = newExposureMax;
+
+		LOG(IPASoft, Debug)
+			<< "FrameDurationLimits: ["
+			<< minFrameDuration.get<std::milli>() << ", "
+			<< maxFrameDuration.get<std::milli>() << "] ms"
+			<< " -> exposureMax=" << newExposureMax;
+	}
 
 	for (const auto &algo : algorithms())
 		algo->queueRequest(context_, frame, frameContext, controls);
