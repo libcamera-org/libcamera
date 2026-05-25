@@ -34,14 +34,35 @@ algorithms:
   #   Only active when CCM is enabled.
   - Adjust:
 
-  # --- Auto Gain/Exposure Control (proportional) ---
-  # exposureTarget: Target MSV (mean sample value) in histogram bins.
-  #   Default: 2.5 (middle of 5-bin range).
-  #   Lower values target a darker exposure.
+  # --- Auto Gain/Exposure Control ---
+  #
+  # exposureTarget: Target MSV on the 1-5 histogram bin scale.
+  #   Default: 2.5 (middle of range). With high meteringPercentile values
+  #   (0.97+), set near the top (4.5) so the Nth percentile pixel lands
+  #   near full brightness -- the subject stays well exposed while the
+  #   brightest (1-N)% of pixels (windows, lights) are allowed to clip.
+  #
   # hysteresis: Deadband around target where no adjustment occurs.
   #   Default 0.2. Larger values reduce sensitivity near target.
-  # proportionalGain: Step scaling factor (default 0.04).
-  #   At max error (~2.5): factor 1.10 (~10% step).
-  #   Near target: factor ~1.01 (~1% step).
+  #
+  # damping: Fraction of the full correction applied each frame (default 0.25).
+  #   Produces a smooth exponential approach to the target rather than
+  #   discrete steps. 1.0 = instant (jump to target), 0.1 = very slow.
+  #   At 0.25, ~94% of the correction is applied within 10 frames.
+  #
+  # meteringPercentile: Histogram percentile used for metering (default 1.0).
+  #   1.0 = expose for the brightest pixel (mean metering).
+  #   0.97-0.99 = ignore the top 1-3% brightest pixels (windows, specular
+  #   highlights) and expose for the rest -- recommended for scenes with
+  #   bright backgrounds. Pair with exposureTarget near 4.5.
+  #   0.5 = median metering (expose for the middle pixel).
+  #
+  # msvFilterAlphaUp: EMA smoothing when metered MSV rises (scene gets darker).
+  #   Default 0.2. Lower = slower response, avoids pumping exposure up on
+  #   transient dark frames (e.g. hand passing in front of camera).
+  #
+  # msvFilterAlphaDown: EMA smoothing when metered MSV falls (scene gets brighter).
+  #   Default 0.6. Higher = faster response, prevents overexposure when a
+  #   bright scene is encountered.
   - Agc:
 ...

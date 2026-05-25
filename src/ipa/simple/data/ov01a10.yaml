@@ -61,14 +61,24 @@ algorithms:
       saturation: 1.0
   - Agc:
       # exposureTarget is on a 1-5 scale (kExposureBinsCount).
-      # With percentile metering, set this near the top (4.5) so the
-      # Nth percentile pixel lands near full brightness -- the subject
-      # stays well exposed while only the top (1-N)% of pixels clip.
+      # With high meteringPercentile (0.98) and target near the top (4.5),
+      # the AGC exposes so the 98th percentile pixel lands at ~88% of full
+      # scale -- the brightest 2% (windows, specular highlights) clip,
+      # everything else (face, normal scene) is properly exposed.
       exposureTarget: 4.5
-      hysteresis: 0.3
-      proportionalGain: 0.12
-      # Expose for the 90th percentile pixel: the brightest 10% of
-      # pixels (window, specular highlights) are allowed to clip while
-      # the subject (face) is correctly exposed.
-      meteringPercentile: 0.97
+      hysteresis: 0.15
+      # damping controls the smoothness of the exposure approach curve.
+      # Each frame moves a fraction (damping) of the way toward the target,
+      # producing an exponential approach.
+      # 0.25 = smooth (~94% in 10 frames), 0.5 = faster, 1.0 = instant.
+      damping: 0.2
+      # Expose for the 98th percentile pixel: ignore the brightest 2%
+      # (windows, lights, specular highlights) so the subject is properly
+      # exposed even with very bright background.
+      meteringPercentile: 0.98
+      # Asymmetric EMA smoothing on the metered MSV before computing
+      # the correction. Slow up (avoid pumping on transient dark frames),
+      # fast down (react quickly to avoid overexposure).
+      msvFilterAlphaUp: 0.25
+      msvFilterAlphaDown: 0.6
 ...
