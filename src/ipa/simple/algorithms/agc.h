@@ -34,7 +34,11 @@ private:
 	float exposureTarget_;
 	float hysteresis_;
 	float proportionalGain_;
+	float damping_;
 	float meteringPercentile_;
+	float msvFilterAlphaUp_;
+	float msvFilterAlphaDown_;
+	float filteredMSV_;
 };
 
 } /* namespace ipa::soft::algorithms */

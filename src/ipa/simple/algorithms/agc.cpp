@@ -40,6 +40,24 @@ static constexpr float kExposureTargetDefault = kExposureBinsCount / 2.0;
 static constexpr float kHysteresisDefault = 0.2;
 
 /*
+ * Damping coefficient for the exposure approach curve.
+ *
+ * On each frame we compute the *full* correction factor needed to reach the
+ * target (correctionFull = exposureTarget / exposureMSV) and then move
+ * a fraction of that distance:
+ *
+ *   exposureNew = exposureCurrent * (1 - damping + damping * correctionFull)
+ *
+ * Equivalently in log/stops space this is an exponential approach. A damping
+ * of 1.0 jumps directly to the target (no smoothing); 0.0 never moves.
+ * The default 0.25 reaches ~94% of the target in 10 frames -- smooth without
+ * being sluggish.
+ *
+ * Overridable via YAML damping.
+ */
+static constexpr float kDampingDefault = 0.25f;
+
+/*
  * Proportional gain for exposure/gain adjustment. Maps the MSV error to a
  * multiplicative correction factor:
  *
@@ -64,7 +82,21 @@ static constexpr float kProportionalGainDefault = 0.04;
  */
 static constexpr float kMeteringPercentileDefault = 1.0;
 
+/*
+ * Asymmetric EMA alpha for the metered MSV.
+ * Two separate smoothing constants:
+ *   - alphaUp: applied when MSV rises (scene gets darker -> increase exposure).
+ *     Slower response avoids pumping up exposure on transient dark frames.
+ *   - alphaDown: applied when MSV falls (scene gets brighter -> decrease exposure).
+ *     Faster response prevents overexposure when a bright scene is encountered.
+ * Range: (0, 1]. 1.0 = no filtering (instant response).
+ * Overridable via YAML msvFilterAlphaUp / msvFilterAlphaDown.
+ */
+static constexpr float kMsvFilterAlphaUpDefault = 0.2f;
+static constexpr float kMsvFilterAlphaDownDefault = 0.6f;
+
 Agc::Agc()
+	: filteredMSV_(-1.0f)
 {
 }
 
@@ -76,8 +108,17 @@ int Agc::init([[maybe_unused]] IPAContext &context, const ValueNode &tuningData)
 		.value_or(kHysteresisDefault);
 	proportionalGain_ = tuningData["proportionalGain"].get<float>()
 		.value_or(kProportionalGainDefault);
+	damping_ = std::clamp(
+		tuningData["damping"].get<float>().value_or(kDampingDefault),
+		0.01f, 1.0f);
 	meteringPercentile_ = tuningData["meteringPercentile"].get<float>()
 		.value_or(kMeteringPercentileDefault);
+	msvFilterAlphaUp_ = std::clamp(
+		tuningData["msvFilterAlphaUp"].get<float>().value_or(kMsvFilterAlphaUpDefault),
+		0.01f, 1.0f);
+	msvFilterAlphaDown_ = std::clamp(
+		tuningData["msvFilterAlphaDown"].get<float>().value_or(kMsvFilterAlphaDownDefault),
+		0.01f, 1.0f);
 
 	return 0;
 }
@@ -93,11 +134,27 @@ void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, dou
 		return;
 
 	/*
-	 * Compute a proportional correction factor. The sign of the error
-	 * determines the direction: positive error means too dark (increase),
-	 * negative means too bright (decrease).
+	 * Compute the full correction factor needed to reach the target,
+	 * then move only a fraction (damping_) of the way there. This produces
+	 * a smooth exponential approach curve rather than discrete steps.
+	 *
+	 * correctionFull = exposureTarget / exposureMSV
+	 * factor = 1 + damping * (correctionFull - 1)
+	 *
+	 * Clamp exposureMSV to a small positive number to avoid division by
+	 * zero and runaway correction factors on near-black frames.
 	 */
-	float factor = 1.0f + static_cast<float>(error) * proportionalGain_;
+	const double msvClamped = std::max(exposureMSV, 0.1);
+	const double correctionFull = exposureTarget_ / msvClamped;
+	float factor = 1.0f + damping_ * static_cast<float>(correctionFull - 1.0);
+
+	/*
+	 * Limit the per-frame factor to a reasonable range to prevent extreme
+	 * jumps if the metering is briefly very wrong (e.g. occlusion, sudden
+	 * scene change). The bounds also ensure stability of the asymptotic
+	 * convergence.
+	 */
+	factor = std::clamp(factor, 0.5f, 2.0f);
 
 	if (factor > 1.0f) {
 		/* Scene too dark: increase exposure first, then gain. */
@@ -135,7 +192,9 @@ void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, dou
 
 	LOG(IPASoftExposure, Debug)
 		<< "exposureMSV " << exposureMSV
-		<< " error " << error << " factor " << factor
+		<< " error " << error
+		<< " correctionFull " << correctionFull
+		<< " factor " << factor
 		<< " exp " << exposure << " again " << again;
 }
 
@@ -242,7 +301,27 @@ void Agc::process(IPAContext &context,
 			<< " -> histBin " << percentileHistBin
 			<< " (MSV=" << exposureMSV << ")";
 	}
-	updateExposure(context, frameContext, exposureMSV);
+
+	/*
+	 * Apply an asymmetric EMA to the metered MSV:
+	 * - When MSV rises (scene darker, need more exposure): smooth slowly to
+	 *   avoid pumping exposure up on transient dark frames.
+	 * - When MSV falls (scene brighter, need less exposure): react quickly
+	 *   to prevent overexposure.
+	 * Seed the filter on the first valid frame.
+	 */
+	if (filteredMSV_ < 0.0f) {
+		filteredMSV_ = exposureMSV;
+	} else {
+		float alpha = (exposureMSV > filteredMSV_) ? msvFilterAlphaUp_
+							   : msvFilterAlphaDown_;
+		filteredMSV_ = alpha * exposureMSV + (1.0f - alpha) * filteredMSV_;
+	}
+
+	LOG(IPASoftExposure, Debug)
+		<< "raw MSV=" << exposureMSV << " filtered=" << filteredMSV_;
+
+	updateExposure(context, frameContext, filteredMSV_);
 }
 
 REGISTER_IPA_ALGORITHM(Agc, "Agc")
