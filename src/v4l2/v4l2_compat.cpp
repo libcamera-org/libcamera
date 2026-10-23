@@ -165,4 +165,25 @@ LIBCAMERA_PUBLIC int ioctl(int fd, unsigned long request, ...)
 	return V4L2CompatManager::instance()->ioctl(fd, request, arg);
 }
 
+/*
+ * __USE_TIME64_REDIRECTS redirects ioctl to __ioctl_time64. Disable the
+ * -Wmissing-declarations warnings, as the functions won't be declared if
+ * __USE_TIME64_REDIRECTS is not in use.
+ */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-declarations"
+
+#if HAVE_POSIX_IOCTL
+LIBCAMERA_PUBLIC int __ioctl_time64(int fd, int request, ...)
+#else
+LIBCAMERA_PUBLIC int __ioctl_time64(int fd, unsigned long request, ...)
+#endif
+{
+	void *arg;
+	extract_va_arg(void *, arg, request);
+
+	return V4L2CompatManager::instance()->ioctl_time64(fd, request, arg);
+}
+
+#pragma GCC diagnostic pop
 }

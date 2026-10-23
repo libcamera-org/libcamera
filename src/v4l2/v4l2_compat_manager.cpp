@@ -46,6 +46,7 @@ V4L2CompatManager::V4L2CompatManager()
 	get_symbol(fops_.dup, "dup");
 	get_symbol(fops_.close, "close");
 	get_symbol(fops_.ioctl, "ioctl");
+	get_symbol(fops_.ioctl_time64, "__ioctl_time64");
 	get_symbol(fops_.mmap, "mmap64");
 	get_symbol(fops_.munmap, "munmap");
 }
@@ -240,6 +241,15 @@ int V4L2CompatManager::ioctl(int fd, unsigned long request, void *arg)
 	std::shared_ptr<V4L2CameraFile> file = cameraFile(fd);
 	if (!file)
 		return fops_.ioctl(fd, request, arg);
+
+	return file->proxy()->ioctl(file.get(), request, arg);
+}
+
+int V4L2CompatManager::ioctl_time64(int fd, unsigned long request, void *arg)
+{
+	std::shared_ptr<V4L2CameraFile> file = cameraFile(fd);
+	if (!file)
+		return fops_.ioctl_time64(fd, request, arg);
 
 	return file->proxy()->ioctl(file.get(), request, arg);
 }

@@ -34,6 +34,7 @@ public:
 		dup_func_t dup;
 		close_func_t close;
 		ioctl_func_t ioctl;
+		ioctl_func_t ioctl_time64;
 		mmap_func_t mmap;
 		munmap_func_t munmap;
 	};
@@ -50,6 +51,7 @@ public:
 		   int fd, off64_t offset);
 	int munmap(void *addr, size_t length);
 	int ioctl(int fd, unsigned long request, void *arg);
+	int ioctl_time64(int fd, unsigned long request, void *arg);
 
 private:
 	V4L2CompatManager();
