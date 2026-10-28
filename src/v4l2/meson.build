@@ -6,15 +6,11 @@ if not v4l2_enabled
     subdir_done()
 endif
 
-v4l2_compat_sources = files([
-    'v4l2_camera.cpp',
-    'v4l2_camera_file.cpp',
-    'v4l2_camera_proxy.cpp',
+v4l2_compat_interceptors_sources = files([
     'v4l2_compat.cpp',
-    'v4l2_compat_manager.cpp',
 ])
 
-v4l2_compat_cpp_args = [
+v4l2_compat_interceptors_cpp_args = [
     # Meson enables large file support unconditionally, which redirect file
     # operations to 64-bit versions. This results in some symbols being
     # renamed, for instance open() being renamed to open64(). As the V4L2
@@ -24,12 +20,29 @@ v4l2_compat_cpp_args = [
     '-D_FILE_OFFSET_BITS=32',
     '-D_LARGEFILE64_SOURCE',
     '-U_TIME_BITS',
+]
+
+v4l2_compat_interceptors = static_library('v4l2-compat-interceptors',
+                                          v4l2_compat_interceptors_sources,
+                                          install : false,
+                                          dependencies : [libcamera_private],
+                                          cpp_args : v4l2_compat_interceptors_cpp_args)
+
+v4l2_compat_sources = files([
+    'v4l2_camera.cpp',
+    'v4l2_camera_file.cpp',
+    'v4l2_camera_proxy.cpp',
+    'v4l2_compat_manager.cpp',
+])
+
+v4l2_compat_cpp_args = [
     '-fvisibility=hidden',
 ]
 
 v4l2_compat = shared_library('v4l2-compat',
                              v4l2_compat_sources,
                              name_prefix : '',
+                             link_whole : v4l2_compat_interceptors,
                              install : true,
                              install_dir : libcamera_libexecdir,
                              dependencies : [libcamera_private, libdl],
