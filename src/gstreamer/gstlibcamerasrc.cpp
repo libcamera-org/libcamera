@@ -981,6 +981,8 @@ gst_libcamera_src_close(GstLibcameraSrc *self)
 				    ("libcamera::Camera.release() failed: %s", g_strerror(-ret)));
 	}
 
+	state->cam_->requestCompleted.disconnect(state);
+
 	state->cam_.reset();
 	state->cm_.reset();
 }
